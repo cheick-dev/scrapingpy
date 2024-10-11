@@ -1,39 +1,54 @@
-from appwrite.client import Client
-from appwrite.services.users import Users
-from appwrite.exception import AppwriteException
-import os
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import requests
+from bs4 import BeautifulSoup
 
-# This Appwrite function will be executed every time your function is triggered
-def main(context):
-    # You can use the Appwrite SDK to interact with other services
-    # For this example, we're using the Users service
-    client = (
-        Client()
-        .set_endpoint(os.environ["APPWRITE_FUNCTION_API_ENDPOINT"])
-        .set_project(os.environ["APPWRITE_FUNCTION_PROJECT_ID"])
-        .set_key(context.req.headers["x-appwrite-key"])
-    )
-    users = Users(client)
+app = Flask(__name__)
+CORS(app)  
 
-    try:
-        response = users.list()
-        # Log messages and errors to the Appwrite Console
-        # These logs won't be seen by your end users
-        context.log("Total users: " + str(response["total"]))
-    except AppwriteException as err:
-        context.error("Could not list users: " + repr(err))
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    login_url = data.get('login_url') 
+    home_url = data.get('home_url') 
 
-    # The req object contains the request data
-    if context.req.path == "/ping":
-        # Use res object to respond with text(), json(), or binary()
-        # Don't forget to return a response!
-        return context.res.text("Pong")
+    session = requests.Session()
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+    }
 
-    return context.res.json(
-        {
-            "motto": "Build like a team of hundreds_",
-            "learn": "https://appwrite.io/docs",
-            "connect": "https://appwrite.io/discord",
-            "getInspired": "https://builtwith.appwrite.io",
+    response = session.get(login_url, headers=headers)
+    print("HTML Response:", response.text) 
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+    logintoken_input = soup.find('input', {'name': 'logintoken'})
+
+    if logintoken_input is None:
+        return jsonify({'status': 'error', 'message': 'Token de connexion non trouvé'}), 500
+
+    logintoken = logintoken_input.get('value')
+
+    login_data = {
+        'username': username,
+        'password': password,
+        'logintoken': logintoken 
+    }
+
+    response = session.post(login_url, data=login_data, headers=headers, allow_redirects=True)
+
+    if response.url == home_url:
+        home_response = session.get(home_url, headers=headers)
+        home_soup = BeautifulSoup(home_response.text, 'html.parser')
+
+        data_extracted = {
+            'span': [element.get_text(strip=True) for element in home_soup.find_all('span')]
         }
-    )
+
+        return jsonify({'status': 'success', 'message': 'Connexion réussie', 'data': data_extracted})
+    else:
+        return jsonify({'status': 'failure', 'message': 'Échec de la connexion'})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
